@@ -1,0 +1,56 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip latest project zip
+        run: |
+          ZIPFILE=$(find . -maxdepth 1 -name "*.zip" -printf "%T@ %p\n" | sort -rn | head -n 1 | cut -d' ' -f2-)
+          echo "Using zip: $ZIPFILE"
+          if [ -n "$ZIPFILE" ]; then
+            rm -rf extracted
+            unzip -o "$ZIPFILE" -d extracted
+          fi
+
+      - name: Find project root
+        id: findroot
+        run: |
+          BUILD_FILE=$(find extracted -maxdepth 3 -name "settings.gradle*" | head -n 1)
+          PROJECT_DIR=$(dirname "$BUILD_FILE")
+          echo "Found project at: $PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate debug keystore
+        run: |
+          keytool -genkey -v \
+            -keystore "${{ steps.findroot.outputs.project_dir }}/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build APK
+        working-directory: ${{ steps.findroot.outputs.project_dir }}
+        run: gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: ${{ steps.findroot.outputs.project_dir }}/app/build/outputs/apk/debug/*.apk
